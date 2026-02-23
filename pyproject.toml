@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proj"
+version = "0.0.1"
+dependencies = [
+    "numpy",
+    "torch",
+    "jax",
+    "einops",
+    "av",
+    "videoprism @ git+https://github.com/google-deepmind/videoprism.git"
+]
+
+[tool.setuptools]
+py-modules = ["model", "utils"]
