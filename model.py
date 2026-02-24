@@ -122,11 +122,16 @@ class VideoPrismWrapper:
         return video_embeddings, text_embeddings_v0, text_embeddings_v1
 
 
+def _normalize_embeddings(embeddings, eps=1e-12):
+    """L2-normalize embeddings with numeric-stable epsilon."""
+    return embeddings / (jnp.linalg.norm(embeddings, axis=-1, keepdims=True) + eps)
+
+
 def compute_paired_softmax(video_embeddings, text_embeddings_v0, text_embeddings_v1, temperature=0.01):
     """Compute row-wise softmax over paired text candidates for each video embedding."""
-    video_norm = video_embeddings / jnp.linalg.norm(video_embeddings, axis=-1, keepdims=True)
-    text_v0_norm = text_embeddings_v0 / jnp.linalg.norm(text_embeddings_v0, axis=-1, keepdims=True)
-    text_v1_norm = text_embeddings_v1 / jnp.linalg.norm(text_embeddings_v1, axis=-1, keepdims=True)
+    video_norm = _normalize_embeddings(video_embeddings)
+    text_v0_norm = _normalize_embeddings(text_embeddings_v0)
+    text_v1_norm = _normalize_embeddings(text_embeddings_v1)
 
     logits = jnp.concatenate(
         [
@@ -138,24 +143,55 @@ def compute_paired_softmax(video_embeddings, text_embeddings_v0, text_embeddings
     return jax.nn.softmax(logits / temperature, axis=-1)
 
 
-def embed_and_score(video_path, texts_v0, texts_v1, intervals: Sequence[Sequence[float]], temperature=0.01):
-    """Run the model on a video and two text lists, then return softmax probabilities."""
+def compute_paired_cosine_similarity(video_embeddings, text_embeddings_v0, text_embeddings_v1):
+    """Compute row-wise non-softmax cosine similarity for each paired text candidate."""
+    video_norm = _normalize_embeddings(video_embeddings)
+    text_v0_norm = _normalize_embeddings(text_embeddings_v0)
+    text_v1_norm = _normalize_embeddings(text_embeddings_v1)
+
+    return jnp.concatenate(
+        [
+            jnp.sum(video_norm * text_v0_norm, axis=-1)[..., None],
+            jnp.sum(video_norm * text_v1_norm, axis=-1)[..., None],
+        ],
+        axis=-1,
+    )
+
+
+def embed_and_score(
+    video_path,
+    texts_v0,
+    texts_v1,
+    intervals: Sequence[Sequence[float]],
+    temperature=0.01,
+    use_softmax=True,
+):
+    """Run the model on a video and two text lists, then return scores."""
     video_embeddings, text_embeddings_v0, text_embeddings_v1 = _videoprism.embed(
         video_path,
         texts_v0,
         texts_v1,
         intervals,
     )
-    softmax_probs = compute_paired_softmax(
-        video_embeddings,
-        text_embeddings_v0,
-        text_embeddings_v1,
-        temperature=temperature,
-    )
-    softmax_probs = np.asarray(softmax_probs)
+    if use_softmax:
+        scores = compute_paired_softmax(
+            video_embeddings,
+            text_embeddings_v0,
+            text_embeddings_v1,
+            temperature=temperature,
+        )
+    else:
+        scores = compute_paired_cosine_similarity(
+            video_embeddings,
+            text_embeddings_v0,
+            text_embeddings_v1,
+        )
+    scores = np.asarray(scores)
     del video_embeddings, text_embeddings_v0, text_embeddings_v1
     gc.collect()
-    return softmax_probs
+    return scores
+
+
 
 
 _videoprism = VideoPrismWrapper()
